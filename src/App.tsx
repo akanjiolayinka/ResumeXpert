@@ -1,0 +1,78 @@
+import { Toaster } from "@/components/ui/toaster";
+import { Toaster as Sonner } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { ThemeProvider } from "@/contexts/ThemeContext";
+import { AuthProvider } from "@/contexts/AuthContext";
+
+// Marketing pages
+import Index from "./pages/Index";
+import Features from "./pages/Features";
+import Pricing from "./pages/Pricing";
+import FAQ from "./pages/FAQ";
+import About from "./pages/About";
+import Contact from "./pages/Contact";
+import Privacy from "./pages/Privacy";
+import Terms from "./pages/Terms";
+
+// Auth pages
+import SignUp from "./pages/auth/SignUp";
+import Login from "./pages/auth/Login";
+import ForgotPassword from "./pages/auth/ForgotPassword";
+
+// App pages (existing)
+import ResumeBuilder from "./pages/ResumeBuilder";
+import ResumeTailor from "./pages/ResumeTailor";
+import ATSScan from "./pages/ATSScan";
+import CoverLetter from "./pages/CoverLetter";
+import Chatbot from "./pages/Chatbot";
+import Tips from "./pages/Tips";
+import Settings from "./pages/Settings";
+import NotFound from "./pages/NotFound";
+
+const queryClient = new QueryClient();
+
+const App = () => (
+  <QueryClientProvider client={queryClient}>
+    <ThemeProvider>
+      <AuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Routes>
+              {/* Marketing */}
+              <Route path="/" element={<Index />} />
+              <Route path="/features" element={<Features />} />
+              <Route path="/pricing" element={<Pricing />} />
+              <Route path="/faq" element={<FAQ />} />
+              <Route path="/about" element={<About />} />
+              <Route path="/contact" element={<Contact />} />
+              <Route path="/privacy" element={<Privacy />} />
+              <Route path="/terms" element={<Terms />} />
+
+              {/* Auth */}
+              <Route path="/auth/signup" element={<SignUp />} />
+              <Route path="/auth/login" element={<Login />} />
+              <Route path="/auth/forgot-password" element={<ForgotPassword />} />
+
+              {/* App (tools) */}
+              <Route path="/resume-builder" element={<ResumeBuilder />} />
+              <Route path="/resume-tailor" element={<ResumeTailor />} />
+              <Route path="/ats-scan" element={<ATSScan />} />
+              <Route path="/cover-letter" element={<CoverLetter />} />
+              <Route path="/chatbot" element={<Chatbot />} />
+              <Route path="/tips" element={<Tips />} />
+              <Route path="/settings" element={<Settings />} />
+
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </BrowserRouter>
+        </TooltipProvider>
+      </AuthProvider>
+    </ThemeProvider>
+  </QueryClientProvider>
+);
+
+export default App;

@@ -1,0 +1,128 @@
+import { Link, useLocation } from "react-router-dom";
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { ThemeToggle } from "@/components/common/ThemeToggle";
+import { Menu, FileText, Target, BarChart3, Mail, MessageSquare, Lightbulb, Settings } from "lucide-react";
+
+const navLinks = [
+  { to: "/resume-builder", label: "Builder", icon: FileText },
+  { to: "/resume-tailor", label: "Tailor", icon: Target },
+  { to: "/ats-scan", label: "ATS Scan", icon: BarChart3 },
+  { to: "/cover-letter", label: "Cover Letter", icon: Mail },
+  { to: "/chatbot", label: "Chatbot", icon: MessageSquare },
+  { to: "/tips", label: "Tips", icon: Lightbulb },
+];
+
+export function Navbar() {
+  const location = useLocation();
+  const [isOpen, setIsOpen] = useState(false);
+
+  const isActive = (path: string) => location.pathname === path;
+
+  return (
+    <header className="sticky top-0 z-50 w-full border-b bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
+      <nav className="page-container flex h-16 items-center justify-between">
+        {/* Logo */}
+        <Link to="/" className="flex items-center gap-2 font-semibold text-xl">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <FileText className="h-4 w-4" />
+          </div>
+          <span className="hidden sm:inline">ResumeXpert</span>
+        </Link>
+
+        {/* Desktop Navigation */}
+        <div className="hidden lg:flex items-center gap-1">
+          {navLinks.map((link) => (
+            <Link
+              key={link.to}
+              to={link.to}
+              className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                isActive(link.to)
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              }`}
+            >
+              {link.label}
+            </Link>
+          ))}
+        </div>
+
+        {/* Desktop Right */}
+        <div className="hidden lg:flex items-center gap-2">
+          <ThemeToggle />
+          <Link to="/settings">
+            <Button variant="ghost" size="icon" className="h-9 w-9">
+              <Settings className="h-4 w-4" />
+            </Button>
+          </Link>
+          <Link to="/resume-builder">
+            <Button>Get Started</Button>
+          </Link>
+        </div>
+
+        {/* Mobile Right */}
+        <div className="flex lg:hidden items-center gap-1">
+          <ThemeToggle />
+          <Sheet open={isOpen} onOpenChange={setIsOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label="Toggle menu">
+                <Menu className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-80">
+              <div className="flex flex-col gap-6 pt-6">
+                <Link
+                  to="/"
+                  className="flex items-center gap-2 font-semibold text-xl"
+                  onClick={() => setIsOpen(false)}
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                    <FileText className="h-4 w-4" />
+                  </div>
+                  <span>ResumeXpert</span>
+                </Link>
+
+                <div className="flex flex-col gap-1">
+                  {navLinks.map((link) => (
+                    <Link
+                      key={link.to}
+                      to={link.to}
+                      onClick={() => setIsOpen(false)}
+                      className={`flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg transition-colors ${
+                        isActive(link.to)
+                          ? "bg-accent text-accent-foreground"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                      }`}
+                    >
+                      <link.icon className="h-4 w-4" />
+                      {link.label}
+                    </Link>
+                  ))}
+                  <Link
+                    to="/settings"
+                    onClick={() => setIsOpen(false)}
+                    className={`flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg transition-colors ${
+                      isActive("/settings")
+                        ? "bg-accent text-accent-foreground"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <Settings className="h-4 w-4" />
+                    Settings
+                  </Link>
+                </div>
+
+                <div className="pt-4 border-t">
+                  <Link to="/resume-builder" onClick={() => setIsOpen(false)}>
+                    <Button className="w-full">Get Started</Button>
+                  </Link>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
+      </nav>
+    </header>
+  );
+}
