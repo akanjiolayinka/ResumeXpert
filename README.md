@@ -1,4 +1,4 @@
-# Resume Wizard
+# ResumeExpert
 
 A modern resume builder application that helps you create professional resumes.
 
