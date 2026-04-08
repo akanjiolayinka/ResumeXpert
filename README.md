@@ -2,7 +2,7 @@
 
 A modern resume builder application that helps you create professional resumes.
 
-## Getting Started
+## Getting Started, lets goo
 
 ### Prerequisites
 
