@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { FileText, Mail, Linkedin, Twitter } from "lucide-react";
+import { FileText } from "lucide-react";
 
 const footerLinks = {
   product: [
