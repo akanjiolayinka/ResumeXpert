@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 
 // Marketing pages
 import Index from "./pages/Index";
@@ -20,8 +21,10 @@ import Terms from "./pages/Terms";
 import SignUp from "./pages/auth/SignUp";
 import Login from "./pages/auth/Login";
 import ForgotPassword from "./pages/auth/ForgotPassword";
+import ResetPassword from "./pages/auth/ResetPassword";
 
-// App pages (existing)
+// App pages (protected)
+import Dashboard from "./pages/Dashboard";
 import ResumeBuilder from "./pages/ResumeBuilder";
 import ResumeTailor from "./pages/ResumeTailor";
 import ATSScan from "./pages/ATSScan";
@@ -51,20 +54,71 @@ const App = () => (
               <Route path="/contact" element={<Contact />} />
               <Route path="/privacy" element={<Privacy />} />
               <Route path="/terms" element={<Terms />} />
+              <Route path="/tips" element={<Tips />} />
 
               {/* Auth */}
               <Route path="/auth/signup" element={<SignUp />} />
               <Route path="/auth/login" element={<Login />} />
               <Route path="/auth/forgot-password" element={<ForgotPassword />} />
+              <Route path="/auth/reset-password" element={<ResetPassword />} />
 
-              {/* App (tools) */}
-              <Route path="/resume-builder" element={<ResumeBuilder />} />
-              <Route path="/resume-tailor" element={<ResumeTailor />} />
-              <Route path="/ats-scan" element={<ATSScan />} />
-              <Route path="/cover-letter" element={<CoverLetter />} />
-              <Route path="/chatbot" element={<Chatbot />} />
-              <Route path="/tips" element={<Tips />} />
-              <Route path="/settings" element={<Settings />} />
+              {/* App (protected) */}
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <Dashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/resume-builder"
+                element={
+                  <ProtectedRoute>
+                    <ResumeBuilder />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/resume-tailor"
+                element={
+                  <ProtectedRoute>
+                    <ResumeTailor />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/ats-scan"
+                element={
+                  <ProtectedRoute>
+                    <ATSScan />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/cover-letter"
+                element={
+                  <ProtectedRoute>
+                    <CoverLetter />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/chatbot"
+                element={
+                  <ProtectedRoute>
+                    <Chatbot />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <ProtectedRoute>
+                    <Settings />
+                  </ProtectedRoute>
+                }
+              />
 
               <Route path="*" element={<NotFound />} />
             </Routes>
