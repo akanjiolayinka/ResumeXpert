@@ -5,7 +5,10 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist"] },
+  // Deno code under supabase/functions has its own runtime, globals, and
+  // import resolver. It is type-checked and linted by `deno check` / `deno
+  // lint` in CI for that subtree, not by ESLint.
+  { ignores: ["dist", "supabase/functions/**"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],
