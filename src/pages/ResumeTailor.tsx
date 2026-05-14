@@ -6,11 +6,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
-import { Upload, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { saveToLocalStorage, loadFromLocalStorage } from "@/lib/storage";
 import { extractKeywords } from "@/lib/resume-utils";
 import { Badge } from "@/components/ui/badge";
+import { ResumeUploader } from "@/components/upload/ResumeUploader";
 
 interface FormData {
   resumeText: string;
@@ -174,17 +175,17 @@ export default function ResumeTailor() {
         <div className="grid lg:grid-cols-2 gap-8">
           {/* Left: Form */}
           <div className="space-y-6">
-            {/* Upload placeholder */}
-            <div className="border-2 border-dashed rounded-xl p-8 text-center bg-muted/20">
-              <Upload className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
-              <p className="font-medium mb-1">Upload Resume</p>
-              <p className="text-sm text-muted-foreground mb-3">
-                PDF or DOCX supported
-              </p>
-              <p className="text-xs text-muted-foreground italic">
-                Frontend demo: file parsing not implemented. Please paste your resume text below.
-              </p>
-            </div>
+            <ResumeUploader
+              onUploaded={(resume) => {
+                updateField("resumeText", resume.raw_text);
+                toast({
+                  title: resume.parse_failed ? "Partial parse" : "Resume uploaded",
+                  description: resume.parse_failed
+                    ? "We extracted the text but couldn't structure all sections. Edit below as needed."
+                    : "Your resume text is ready below.",
+                });
+              }}
+            />
 
             {/* Resume Text */}
             <div>

@@ -4,12 +4,13 @@ import { ScoreMeter } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Upload, Loader2, AlertCircle, CheckCircle, Info } from "lucide-react";
+import { Loader2, AlertCircle, CheckCircle, Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { saveToLocalStorage, loadFromLocalStorage } from "@/lib/storage";
 import { calculateATSScore } from "@/lib/resume-utils";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { ResumeUploader } from "@/components/upload/ResumeUploader";
 
 interface FormData {
   resumeText: string;
@@ -97,14 +98,18 @@ export default function ATSScan() {
         <div className="grid lg:grid-cols-2 gap-8">
           {/* Left: Input */}
           <div className="space-y-6">
-            {/* Upload placeholder */}
-            <div className="border-2 border-dashed rounded-xl p-6 text-center bg-muted/20">
-              <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-              <p className="text-sm font-medium">Upload Resume (PDF/DOCX)</p>
-              <p className="text-xs text-muted-foreground mt-1 italic">
-                Demo: paste text below
-              </p>
-            </div>
+            <ResumeUploader
+              compact
+              onUploaded={(resume) => {
+                updateField("resumeText", resume.raw_text);
+                toast({
+                  title: resume.parse_failed ? "Partial parse" : "Resume uploaded",
+                  description: resume.parse_failed
+                    ? "We extracted the text but couldn't structure all sections."
+                    : "Your resume text is ready below.",
+                });
+              }}
+            />
 
             <div>
               <Label htmlFor="resumeText">Resume Text *</Label>
