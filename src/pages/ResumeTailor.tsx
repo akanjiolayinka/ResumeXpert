@@ -1,159 +1,134 @@
 import { useState, useEffect } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Layout, PageHeader } from "@/components/layout";
 import { OutputPanel } from "@/components/common";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Switch } from "@/components/ui/switch";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { saveToLocalStorage, loadFromLocalStorage } from "@/lib/storage";
-import { extractKeywords } from "@/lib/resume-utils";
-import { Badge } from "@/components/ui/badge";
 import { ResumeUploader } from "@/components/upload/ResumeUploader";
-
-interface FormData {
-  resumeText: string;
-  jobDescription: string;
-  onePageOnly: boolean;
-  tone: "confident" | "neutral" | "direct";
-}
-
-const defaultFormData: FormData = {
-  resumeText: "",
-  jobDescription: "",
-  onePageOnly: true,
-  tone: "neutral",
-};
+import { tailorRequestSchema, type TailorRequestValues } from "@/lib/schemas/tailor";
+import { useCreateTailoringJob } from "@/lib/queries/tailoringJobs";
+import { useTailoringJob } from "@/lib/realtime/useTailoringJob";
+import { useTailoredResume } from "@/lib/queries/tailoringJobs";
+import { DiffView, type DiffEntry } from "@/components/tailored/DiffView";
+import { GapsView, type GapEntry } from "@/components/tailored/GapsView";
 
 const STORAGE_KEY = "resume_tailor_form";
 
+const STATUS_TEXT: Record<string, string> = {
+  pending: "Preparing your resume…",
+  running: "Tailoring with AI — this takes 5–10 seconds…",
+};
+
 export default function ResumeTailor() {
-  const [formData, setFormData] = useState<FormData>(() =>
-    loadFromLocalStorage(STORAGE_KEY, defaultFormData)
-  );
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedContent, setGeneratedContent] = useState<{
-    tailoredResume: string;
-    changes: string[];
-    keywords: { matched: string[]; total: number };
-  } | null>(null);
+  // baseResumeId is set when a file is uploaded; null means paste-only (auto-row)
+  const [baseResumeId, setBaseResumeId] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+
   const { toast } = useToast();
+  const createJob = useCreateTailoringJob();
+  const { job } = useTailoringJob(jobId);
+  const { data: tailoredResume } = useTailoredResume(job?.tailored_resume_id ?? null);
 
+  const savedForm = loadFromLocalStorage<Partial<TailorRequestValues>>(STORAGE_KEY, {});
+
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    watch,
+    formState: { errors },
+  } = useForm<TailorRequestValues>({
+    resolver: zodResolver(tailorRequestSchema),
+    defaultValues: {
+      resumeText: savedForm.resumeText ?? "",
+      jobDescription: savedForm.jobDescription ?? "",
+      roleTitle: savedForm.roleTitle ?? "",
+      companyName: savedForm.companyName ?? "",
+    },
+  });
+
+  // Persist form to localStorage on change
+  const formValues = watch();
   useEffect(() => {
-    saveToLocalStorage(STORAGE_KEY, formData);
-  }, [formData]);
+    saveToLocalStorage(STORAGE_KEY, formValues);
+  }, [formValues]);
 
-  const updateField = <K extends keyof FormData>(field: K, value: FormData[K]) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+  // Surface failed status as a toast (once per jobId)
+  useEffect(() => {
+    if (job?.status === "failed") {
+      toast({
+        title: "Tailoring failed",
+        description: job.error_message ?? "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
+    }
+  }, [job?.status, job?.error_message, toast]);
+
+  const onSubmit = async (values: TailorRequestValues) => {
+    // Reset previous result so the panel shows the loading state
+    setJobId(null);
+    try {
+      const result = await createJob.mutateAsync({
+        baseResumeId,
+        resumeText: values.resumeText,
+        jobDescription: values.jobDescription,
+        roleTitle: values.roleTitle || undefined,
+        companyName: values.companyName || undefined,
+      });
+      setJobId(result.jobId);
+    } catch (err) {
+      toast({
+        title: "Request failed",
+        description: err instanceof Error ? err.message : "Could not start tailoring. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleGenerate = async () => {
-    if (!formData.resumeText.trim()) {
-      toast({ title: "Missing resume", description: "Please paste your resume text.", variant: "destructive" });
-      return;
-    }
-    if (!formData.jobDescription.trim()) {
-      toast({ title: "Missing job description", description: "Please paste the job description.", variant: "destructive" });
-      return;
-    }
+  const isInFlight =
+    createJob.isPending ||
+    (job !== null && job !== undefined && job.status === "pending") ||
+    (job !== null && job !== undefined && job.status === "running");
 
-    setIsGenerating(true);
-    await new Promise((resolve) => setTimeout(resolve, 1800));
+  const succeeded = job?.status === "succeeded" && tailoredResume !== null && tailoredResume !== undefined;
+  const failed = job?.status === "failed";
 
-    // Extract keywords
-    const jdKeywords = extractKeywords(formData.jobDescription);
-    const resumeKeywords = new Set(extractKeywords(formData.resumeText));
-    const matchedKeywords = jdKeywords.filter((k) => resumeKeywords.has(k));
+  // Derive loader label
+  let statusLabel = "Generating your tailored resume…";
+  if (createJob.isPending) statusLabel = "Submitting…";
+  else if (job?.status) statusLabel = STATUS_TEXT[job.status] ?? statusLabel;
 
-    // Simple tailoring simulation
-    let tailored = formData.resumeText;
-    
-    // Add a note about keyword additions
-    const missingTop5 = jdKeywords.filter((k) => !resumeKeywords.has(k)).slice(0, 5);
-    if (missingTop5.length > 0) {
-      const skillsMatch = tailored.match(/SKILLS\n-+\n([\s\S]*?)(?=\n\n[A-Z]|\n\n$|$)/i);
-      if (skillsMatch) {
-        const newSkillsLine = `\n[Suggested additions: ${missingTop5.join(", ")}]`;
-        tailored = tailored.replace(skillsMatch[0], skillsMatch[0] + newSkillsLine);
-      }
-    }
+  // Parse structured diffs + gaps from tailored_resumes.structured (jsonb)
+  let diffs: DiffEntry[] = [];
+  let gaps: GapEntry[] = [];
+  if (tailoredResume?.structured) {
+    const s = tailoredResume.structured as Record<string, unknown>;
+    if (Array.isArray(s.diffs)) diffs = s.diffs as DiffEntry[];
+    if (Array.isArray(s.gaps)) gaps = s.gaps as GapEntry[];
+  }
 
-    // Add a header note
-    tailored = `[TAILORED VERSION - Optimized for the provided job description]\n\n${tailored}`;
-
-    const changes = [
-      "Reordered skills to prioritize keywords from the job description",
-      "Strengthened experience bullets with clearer impact language",
-      "Added ATS-friendly headings and consistent date formats",
-      `Identified ${matchedKeywords.length} matching keywords out of ${jdKeywords.length} important terms`,
-      "Suggested additions for missing keywords in the skills section",
-      "Improved bullet structure to follow Action + What + Result format",
-    ];
-
-    setGeneratedContent({
-      tailoredResume: tailored,
-      changes,
-      keywords: { matched: matchedKeywords, total: jdKeywords.length },
-    });
-
-    setIsGenerating(false);
-    toast({ title: "Resume tailored!", description: "Check the output panel for your tailored resume." });
-  };
-
-  const outputTabs = generatedContent
+  const outputTabs = succeeded
     ? [
         {
           id: "tailored",
           label: "Tailored Resume",
-          content: generatedContent.tailoredResume,
+          content: tailoredResume!.rendered_text,
         },
         {
           id: "changes",
           label: "What Changed",
-          content: (
-            <div className="space-y-3 p-4">
-              <p className="text-sm font-medium mb-3">Changes made to your resume:</p>
-              <ul className="space-y-2">
-                {generatedContent.changes.map((change, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm">
-                    <span className="text-primary">•</span>
-                    <span>{change}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ),
+          content: <DiffView diffs={diffs} />,
         },
         {
-          id: "keywords",
-          label: "Keyword Match",
-          content: (
-            <div className="space-y-4 p-4">
-              <div className="flex items-center gap-4">
-                <div className="text-center">
-                  <div className="text-3xl font-bold text-primary">
-                    {Math.round((generatedContent.keywords.matched.length / generatedContent.keywords.total) * 100)}%
-                  </div>
-                  <div className="text-sm text-muted-foreground">Match Rate</div>
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  {generatedContent.keywords.matched.length} of {generatedContent.keywords.total} keywords found
-                </div>
-              </div>
-              <div>
-                <p className="text-sm font-medium mb-2">Matched Keywords:</p>
-                <div className="flex flex-wrap gap-2">
-                  {generatedContent.keywords.matched.map((kw) => (
-                    <Badge key={kw} variant="secondary" className="bg-accent text-accent-foreground">
-                      {kw}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ),
+          id: "gaps",
+          label: "Skill Gaps",
+          content: <GapsView gaps={gaps} />,
         },
       ]
     : [
@@ -169,19 +144,20 @@ export default function ResumeTailor() {
       <div className="page-container section-spacing">
         <PageHeader
           title="Tailor Resume to Job"
-          description="Optimize your existing resume to match a specific job description. We'll highlight matching keywords and suggest improvements."
+          description="Optimize your existing resume to match a specific job description using AI. We'll highlight what changed and flag skill gaps."
         />
 
         <div className="grid lg:grid-cols-2 gap-8">
           {/* Left: Form */}
-          <div className="space-y-6">
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" noValidate>
             <ResumeUploader
               onUploaded={(resume) => {
-                updateField("resumeText", resume.raw_text);
+                setValue("resumeText", resume.raw_text, { shouldValidate: true });
+                setBaseResumeId(resume.id);
                 toast({
                   title: resume.parse_failed ? "Partial parse" : "Resume uploaded",
                   description: resume.parse_failed
-                    ? "We extracted the text but couldn't structure all sections. Edit below as needed."
+                    ? "We extracted the text but couldn't fully structure it. Edit below as needed."
                     : "Your resume text is ready below.",
                 });
               }}
@@ -189,72 +165,83 @@ export default function ResumeTailor() {
 
             {/* Resume Text */}
             <div>
-              <Label htmlFor="resumeText">Or paste your resume text *</Label>
+              <Label htmlFor="resumeText">
+                Or paste your resume text <span aria-hidden="true">*</span>
+              </Label>
               <Textarea
                 id="resumeText"
-                placeholder="Paste your current resume here..."
-                value={formData.resumeText}
-                onChange={(e) => updateField("resumeText", e.target.value)}
+                placeholder="Paste your current resume here…"
                 rows={10}
                 className="mt-1.5 font-mono text-sm"
+                {...register("resumeText")}
               />
+              {errors.resumeText && (
+                <p className="mt-1 text-xs text-destructive">{errors.resumeText.message}</p>
+              )}
             </div>
 
             {/* Job Description */}
             <div>
-              <Label htmlFor="jobDescription">Job Description *</Label>
+              <Label htmlFor="jobDescription">
+                Job Description <span aria-hidden="true">*</span>
+              </Label>
               <Textarea
                 id="jobDescription"
-                placeholder="Paste the job description here..."
-                value={formData.jobDescription}
-                onChange={(e) => updateField("jobDescription", e.target.value)}
+                placeholder="Paste the job description here…"
                 rows={8}
                 className="mt-1.5"
+                {...register("jobDescription")}
               />
+              {errors.jobDescription && (
+                <p className="mt-1 text-xs text-destructive">{errors.jobDescription.message}</p>
+              )}
             </div>
 
-            {/* Settings */}
-            <div className="space-y-4 p-4 border rounded-lg bg-muted/20">
-              <h3 className="font-medium">Settings</h3>
-              <div className="flex items-center justify-between">
-                <Label htmlFor="onePageOnly">One Page Only</Label>
-                <Switch
-                  id="onePageOnly"
-                  checked={formData.onePageOnly}
-                  onCheckedChange={(checked) => updateField("onePageOnly", checked)}
+            {/* Optional fields */}
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="roleTitle">Role Title (optional)</Label>
+                <Input
+                  id="roleTitle"
+                  placeholder="e.g. Senior Software Engineer"
+                  className="mt-1.5"
+                  {...register("roleTitle")}
                 />
               </div>
               <div>
-                <Label className="mb-3 block">Tone</Label>
-                <RadioGroup
-                  value={formData.tone}
-                  onValueChange={(value) => updateField("tone", value as FormData["tone"])}
-                  className="flex gap-4"
-                >
-                  {["confident", "neutral", "direct"].map((tone) => (
-                    <div key={tone} className="flex items-center space-x-2">
-                      <RadioGroupItem value={tone} id={`tailor-${tone}`} />
-                      <Label htmlFor={`tailor-${tone}`} className="capitalize cursor-pointer">
-                        {tone}
-                      </Label>
-                    </div>
-                  ))}
-                </RadioGroup>
+                <Label htmlFor="companyName">Company Name (optional)</Label>
+                <Input
+                  id="companyName"
+                  placeholder="e.g. Flutterwave"
+                  className="mt-1.5"
+                  {...register("companyName")}
+                />
               </div>
             </div>
 
-            <Button onClick={handleGenerate} disabled={isGenerating} className="w-full">
-              {isGenerating && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Generate Tailored Resume
+            <Button type="submit" disabled={isInFlight} className="w-full">
+              {isInFlight ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  {statusLabel}
+                </>
+              ) : failed ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Retry
+                </>
+              ) : (
+                "Generate Tailored Resume"
+              )}
             </Button>
-          </div>
+          </form>
 
           {/* Right: Output */}
           <div className="lg:sticky lg:top-24 lg:self-start">
             <OutputPanel
               title="Tailored Resume"
               tabs={outputTabs}
-              isLoading={isGenerating}
+              isLoading={isInFlight}
             />
           </div>
         </div>
