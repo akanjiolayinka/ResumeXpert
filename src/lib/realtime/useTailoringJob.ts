@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Database } from "@/lib/database.types";
+import { useScoreResume } from "@/lib/queries/atsScores";
 
 export type TailoringJob = Database["public"]["Tables"]["tailoring_jobs"]["Row"];
 
@@ -15,6 +16,11 @@ type State = {
  * sees status transitions (pending -> running -> succeeded | failed) without
  * polling. Returns null job + isLoading=false when id is null/undefined, so
  * callers can guard rendering without conditional hooks.
+ *
+ * Side effect (Fi4): when the job first transitions to status='succeeded'
+ * with ats_score_id=null, automatically fires the score-ats edge function
+ * so the user sees an ATS score without a separate manual step. Tracked per
+ * job id via a ref to avoid double-firing on re-renders.
  */
 export function useTailoringJob(id: string | null | undefined): State {
   const [state, setState] = useState<State>({
@@ -22,6 +28,9 @@ export function useTailoringJob(id: string | null | undefined): State {
     isLoading: !!id,
     error: null,
   });
+
+  const scoreResume = useScoreResume();
+  const autoScoredFor = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!id) {
@@ -71,6 +80,17 @@ export function useTailoringJob(id: string | null | undefined): State {
       void supabase.removeChannel(channel);
     };
   }, [id]);
+
+  // Auto-trigger ATS scoring when job succeeds without a linked score yet.
+  useEffect(() => {
+    const job = state.job;
+    if (!job) return;
+    if (job.status !== "succeeded") return;
+    if (job.ats_score_id) return;
+    if (autoScoredFor.current.has(job.id)) return;
+    autoScoredFor.current.add(job.id);
+    scoreResume.mutate({ tailoring_job_id: job.id });
+  }, [state.job, scoreResume]);
 
   return state;
 }
