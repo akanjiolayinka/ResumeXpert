@@ -17,6 +17,8 @@ import { useTailoringJob } from "@/lib/realtime/useTailoringJob";
 import { useTailoredResume } from "@/lib/queries/tailoringJobs";
 import { DiffView, type DiffEntry } from "@/components/tailored/DiffView";
 import { GapsView, type GapEntry } from "@/components/tailored/GapsView";
+import { ExportMenu } from "@/components/tailored/ExportMenu";
+import type { ResumeStructuredData } from "@/lib/export/ResumeDocument";
 
 const STORAGE_KEY = "resume_tailor_form";
 
@@ -237,7 +239,16 @@ export default function ResumeTailor() {
           </form>
 
           {/* Right: Output */}
-          <div className="lg:sticky lg:top-24 lg:self-start">
+          <div className="lg:sticky lg:top-24 lg:self-start space-y-3">
+            {succeeded && tailoredResume && (
+              <div className="flex justify-end">
+                <ExportMenu
+                  structured={tailoredResume.structured as ResumeStructuredData}
+                  roleTitle={job?.role_title}
+                  companyName={job?.company_name}
+                />
+              </div>
+            )}
             <OutputPanel
               title="Tailored Resume"
               tabs={outputTabs}
