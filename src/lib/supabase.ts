@@ -12,3 +12,8 @@ if (!url || !anonKey) {
 }
 
 export const supabase = createClient<Database>(url, anonKey);
+
+// Exposed for callers that bypass supabase-js (e.g. the chat SSE stream uses
+// a raw fetch with response.body.getReader(), which functions.invoke can't do).
+export const SUPABASE_URL = url;
+export const SUPABASE_ANON_KEY = anonKey;
