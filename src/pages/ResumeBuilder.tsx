@@ -1,862 +1,612 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useForm, useFieldArray } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Layout, PageHeader } from "@/components/layout";
-import { FormSection, TagInput, OutputPanel } from "@/components/common";
+import { OutputPanel } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
-import { Checkbox } from "@/components/ui/checkbox";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Plus, Trash2, ChevronDown, Loader2 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { saveToLocalStorage, loadFromLocalStorage, clearLocalStorage } from "@/lib/storage";
-import { sampleProfiles, generateResumeText, extractKeywords } from "@/lib/resume-utils";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-
-interface Experience {
-  id: string;
-  company: string;
-  role: string;
-  dates: string;
-  description: string;
-  metrics: string;
-}
-
-interface Project {
-  id: string;
-  name: string;
-  link: string;
-  stack: string;
-  description: string;
-  contribution: string;
-  results: string;
-}
-
-interface FormData {
-  jobDescription: string;
-  companyName: string;
-  roleTitle: string;
-  onePageOnly: boolean;
-  tone: "confident" | "neutral" | "direct";
-  includeProjects: boolean;
-  includeCertifications: boolean;
-  fullName: string;
-  email: string;
-  phone: string;
-  location: string;
-  linkedin: string;
-  portfolio: string;
-  summary: string;
-  skills: string[];
-  experiences: Experience[];
-  projects: Project[];
-  school: string;
-  degree: string;
-  eduDates: string;
-  gpa: string;
-  certifications: string;
-  awards: string;
-  volunteering: string;
-}
-
-const defaultFormData: FormData = {
-  jobDescription: "",
-  companyName: "",
-  roleTitle: "",
-  onePageOnly: true,
-  tone: "neutral",
-  includeProjects: true,
-  includeCertifications: true,
-  fullName: "",
-  email: "",
-  phone: "",
-  location: "",
-  linkedin: "",
-  portfolio: "",
-  summary: "",
-  skills: [],
-  experiences: [{ id: "1", company: "", role: "", dates: "", description: "", metrics: "" }],
-  projects: [{ id: "1", name: "", link: "", stack: "", description: "", contribution: "", results: "" }],
-  school: "",
-  degree: "",
-  eduDates: "",
-  gpa: "",
-  certifications: "",
-  awards: "",
-  volunteering: "",
-};
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Plus,
+  Trash2,
+  Loader2,
+  Save,
+  Check,
+  Wand2,
+  RefreshCw,
+} from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { saveToLocalStorage, loadFromLocalStorage } from "@/lib/storage";
+import {
+  resumeFormSchema,
+  emptyResumeForm,
+  type ResumeFormValues,
+} from "@/lib/schemas/resume";
+import { sampleProfiles } from "@/lib/sample-profiles";
+import {
+  resumeFormToStructured,
+  resumeFormToRawText,
+} from "@/lib/export/resumeFormToRawText";
+import { supabase } from "@/lib/supabase";
+import { useCreateResume } from "@/lib/queries/resumes";
+import { useCreateTailoringJob, useTailoredResume } from "@/lib/queries/tailoringJobs";
+import { useTailoringJob } from "@/lib/realtime/useTailoringJob";
+import { DiffView, type DiffEntry } from "@/components/tailored/DiffView";
+import { GapsView, type GapEntry } from "@/components/tailored/GapsView";
+import { ExportMenu } from "@/components/tailored/ExportMenu";
+import type { ResumeStructuredData } from "@/lib/export/ResumeDocument";
 
 const STORAGE_KEY = "resume_builder_form";
 
+const STATUS_TEXT: Record<string, string> = {
+  pending: "Preparing your resume…",
+  running: "Tailoring with AI — this takes 5–10 seconds…",
+};
+
 export default function ResumeBuilder() {
-  const [formData, setFormData] = useState<FormData>(() => 
-    loadFromLocalStorage(STORAGE_KEY, defaultFormData)
-  );
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedContent, setGeneratedContent] = useState<{
-    resume: string;
-    keywords: string[];
-    improvements: string[];
-  } | null>(null);
   const { toast } = useToast();
+  const createResume = useCreateResume();
+  const createJob = useCreateTailoringJob();
 
-  // Save to localStorage on change
+  const [savedResumeId, setSavedResumeId] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const { job } = useTailoringJob(jobId);
+  const { data: tailoredResume } = useTailoredResume(job?.tailored_resume_id ?? null);
+
+  const saved = loadFromLocalStorage<ResumeFormValues>(STORAGE_KEY, emptyResumeForm);
+
+  const form = useForm<ResumeFormValues>({
+    resolver: zodResolver(resumeFormSchema),
+    defaultValues: { ...emptyResumeForm, ...saved },
+  });
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { errors, isDirty },
+  } = form;
+
+  const experiences = useFieldArray({ control, name: "experiences" });
+  const projects = useFieldArray({ control, name: "projects" });
+  const education = useFieldArray({ control, name: "education" });
+
+  const formValues = watch();
   useEffect(() => {
-    saveToLocalStorage(STORAGE_KEY, formData);
-  }, [formData]);
+    saveToLocalStorage(STORAGE_KEY, formValues);
+  }, [formValues]);
 
-  const updateField = <K extends keyof FormData>(field: K, value: FormData[K]) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const addExperience = () => {
-    const newExp: Experience = {
-      id: Date.now().toString(),
-      company: "",
-      role: "",
-      dates: "",
-      description: "",
-      metrics: "",
-    };
-    updateField("experiences", [...formData.experiences, newExp]);
-  };
-
-  const removeExperience = (id: string) => {
-    if (formData.experiences.length > 1) {
-      updateField("experiences", formData.experiences.filter((e) => e.id !== id));
+  // Surface a failed tailoring job as a toast.
+  useEffect(() => {
+    if (job?.status === "failed") {
+      toast({
+        title: "Tailoring failed",
+        description: job.error_message ?? "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
     }
-  };
+  }, [job?.status, job?.error_message, toast]);
 
-  const updateExperience = (id: string, field: keyof Experience, value: string) => {
-    updateField(
-      "experiences",
-      formData.experiences.map((e) => (e.id === id ? { ...e, [field]: value } : e))
-    );
-  };
+  const jdValue = watch("jobDescription");
+  const canTailor = !!jdValue && jdValue.trim().length > 0;
+  const isSaved = !!savedResumeId && !isDirty;
 
-  const addProject = () => {
-    const newProj: Project = {
-      id: Date.now().toString(),
-      name: "",
-      link: "",
-      stack: "",
-      description: "",
-      contribution: "",
-      results: "",
-    };
-    updateField("projects", [...formData.projects, newProj]);
-  };
+  const isTailoring =
+    createJob.isPending ||
+    job?.status === "pending" ||
+    job?.status === "running";
 
-  const removeProject = (id: string) => {
-    if (formData.projects.length > 1) {
-      updateField("projects", formData.projects.filter((p) => p.id !== id));
+  const succeeded =
+    job?.status === "succeeded" && tailoredResume !== null && tailoredResume !== undefined;
+
+  let statusLabel = "Tailoring…";
+  if (createJob.isPending) statusLabel = "Saving & submitting…";
+  else if (job?.status) statusLabel = STATUS_TEXT[job.status] ?? statusLabel;
+
+  // ── Persistence helpers ─────────────────────────────────────────────
+  const persist = async (data: ResumeFormValues): Promise<string> => {
+    const structured = resumeFormToStructured(data);
+    const raw_text = resumeFormToRawText(data);
+    const label = data.fullName ? `${data.fullName}'s resume` : "My resume";
+
+    if (savedResumeId) {
+      const { error } = await supabase
+        .from("resumes")
+        .update({ label, raw_text, structured: structured as never } as never)
+        .eq("id", savedResumeId);
+      if (error) throw new Error(error.message);
+      reset(data);
+      return savedResumeId;
     }
-  };
 
-  const updateProject = (id: string, field: keyof Project, value: string) => {
-    updateField(
-      "projects",
-      formData.projects.map((p) => (p.id === id ? { ...p, [field]: value } : p))
-    );
-  };
-
-  const loadSampleProfile = (profileKey: keyof typeof sampleProfiles) => {
-    const profile = sampleProfiles[profileKey];
-    setFormData({
-      ...defaultFormData,
-      fullName: profile.fullName,
-      email: profile.email,
-      phone: profile.phone,
-      location: profile.location,
-      linkedin: profile.linkedin,
-      portfolio: profile.portfolio,
-      summary: profile.summary,
-      skills: profile.skills,
-      experiences: profile.experiences.map((exp, i) => ({
-        id: String(i + 1),
-        company: exp.company,
-        role: exp.role,
-        dates: exp.dates,
-        description: exp.description,
-        metrics: exp.metrics || "",
-      })),
-      projects: profile.projects.map((proj, i) => ({
-        id: String(i + 1),
-        name: proj.name,
-        link: proj.link,
-        stack: proj.stack,
-        description: proj.description,
-        contribution: proj.contribution,
-        results: proj.results || "",
-      })),
-      school: profile.education.school,
-      degree: profile.education.degree,
-      eduDates: profile.education.dates,
-      gpa: profile.education.gpa,
-      certifications: profile.certifications.join("\n"),
-      volunteering: profile.volunteering.join("\n"),
+    const created = await createResume.mutateAsync({
+      label,
+      raw_text,
+      structured,
+      source_kind: "manual",
     });
-    toast({ title: "Sample loaded", description: "Sample profile has been loaded into the form." });
+    setSavedResumeId(created.id);
+    reset(data);
+    return created.id;
   };
 
-  const clearForm = () => {
-    setFormData(defaultFormData);
-    clearLocalStorage(STORAGE_KEY);
-    setGeneratedContent(null);
-    toast({ title: "Form cleared", description: "All fields have been reset." });
-  };
-
-  const handleGenerate = async () => {
-    // Validation
-    if (!formData.fullName.trim()) {
-      toast({ title: "Missing info", description: "Please enter your full name.", variant: "destructive" });
-      return;
+  const onSave = handleSubmit(async (data) => {
+    try {
+      await persist(data);
+      toast({ title: "Saved", description: "Your resume is saved to your dashboard." });
+    } catch (err) {
+      toast({
+        title: "Save failed",
+        description: err instanceof Error ? err.message : "Could not save your resume.",
+        variant: "destructive",
+      });
     }
-    if (!formData.email.trim()) {
-      toast({ title: "Missing info", description: "Please enter your email.", variant: "destructive" });
-      return;
+  });
+
+  const onTailor = handleSubmit(async (data) => {
+    if (!data.jobDescription || data.jobDescription.trim().length === 0) return;
+    try {
+      // Save first if there's no saved resume yet or the form changed since.
+      const baseResumeId = !savedResumeId || isDirty ? await persist(data) : savedResumeId;
+      setJobId(null);
+      const { jobId: newJobId } = await createJob.mutateAsync({
+        baseResumeId,
+        resumeText: resumeFormToRawText(data),
+        jobDescription: data.jobDescription,
+        roleTitle: data.roleTitle || undefined,
+        companyName: data.companyName || undefined,
+      });
+      setJobId(newJobId);
+    } catch (err) {
+      toast({
+        title: "Tailoring request failed",
+        description: err instanceof Error ? err.message : "Could not start tailoring.",
+        variant: "destructive",
+      });
     }
+  });
 
-    setIsGenerating(true);
-
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    const resumeText = generateResumeText({
-      fullName: formData.fullName,
-      email: formData.email,
-      phone: formData.phone,
-      location: formData.location,
-      linkedin: formData.linkedin,
-      portfolio: formData.portfolio,
-      summary: formData.summary,
-      skills: formData.skills,
-      experiences: formData.experiences.filter((e) => e.company || e.role),
-      projects: formData.includeProjects
-        ? formData.projects.filter((p) => p.name)
-        : [],
-      education: {
-        school: formData.school,
-        degree: formData.degree,
-        dates: formData.eduDates,
-        gpa: formData.gpa,
-      },
-      certifications: formData.includeCertifications
-        ? formData.certifications.split("\n").filter(Boolean)
-        : [],
-      volunteering: formData.volunteering.split("\n").filter(Boolean),
-      targetRole: formData.roleTitle,
-      targetCompany: formData.companyName,
-    });
-
-    const jdKeywords = formData.jobDescription
-      ? extractKeywords(formData.jobDescription)
-      : [];
-    const resumeKeywords = new Set(extractKeywords(resumeText));
-    const missingKeywords = jdKeywords.filter((k) => !resumeKeywords.has(k)).slice(0, 8);
-
-    const improvements = [
-      "Add measurable impact to 2–3 bullets (numbers, speed, cost, users)",
-      "Reorder skills to match the job description keywords",
-      'Make bullets outcome-focused: action + what + result',
-      "Ensure consistent date formatting (e.g., May 2025 – Jan 2026)",
-      "Add links for portfolio/GitHub if applicable",
-      "Keep formatting ATS-safe: avoid tables, icons, columns, and images",
-    ];
-
-    setGeneratedContent({
-      resume: resumeText,
-      keywords: missingKeywords,
-      improvements,
-    });
-
-    setIsGenerating(false);
-    toast({ title: "Resume generated!", description: "Your resume is ready. Check the output panel." });
+  const onClear = () => {
+    reset(emptyResumeForm);
+    setSavedResumeId(null);
+    setJobId(null);
   };
 
-  const outputTabs = generatedContent
+  const onSample = (key: string) => {
+    const profile = sampleProfiles[key];
+    if (!profile) return;
+    reset(profile.data);
+    setSavedResumeId(null);
+    setJobId(null);
+  };
+
+  // ── Output panel content ────────────────────────────────────────────
+  let diffs: DiffEntry[] = [];
+  let gaps: GapEntry[] = [];
+  if (tailoredResume?.structured) {
+    const s = tailoredResume.structured as Record<string, unknown>;
+    if (Array.isArray(s.diffs)) diffs = s.diffs as DiffEntry[];
+    if (Array.isArray(s.gaps)) gaps = s.gaps as GapEntry[];
+  }
+
+  const previewText = resumeFormToRawText(formValues);
+
+  const outputTabs = succeeded
     ? [
-        {
-          id: "resume",
-          label: "Resume Text",
-          content: generatedContent.resume,
-        },
-        {
-          id: "keywords",
-          label: "Keyword Gaps",
-          content: (
-            <div className="space-y-4 p-4">
-              {generatedContent.keywords.length > 0 ? (
-                <>
-                  <p className="text-sm text-muted-foreground">
-                    These keywords from the job description may be worth including:
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {generatedContent.keywords.map((kw) => (
-                      <Badge key={kw} variant="secondary">
-                        {kw}
-                      </Badge>
-                    ))}
-                  </div>
-                  <div className="text-sm text-muted-foreground mt-4">
-                    <p className="font-medium mb-2">Suggested placement:</p>
-                    <ul className="list-disc list-inside space-y-1">
-                      <li>Skills section: Add relevant technical keywords</li>
-                      <li>Experience bullets: Incorporate action-oriented keywords</li>
-                      <li>Projects: Highlight matching technologies</li>
-                    </ul>
-                  </div>
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Paste a job description to see keyword gap analysis.
-                </p>
-              )}
-            </div>
-          ),
-        },
-        {
-          id: "improvements",
-          label: "Improvements",
-          content: (
-            <div className="space-y-3 p-4">
-              <p className="text-sm font-medium mb-3">Top improvements (prioritized):</p>
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-destructive uppercase">High Priority</p>
-                {generatedContent.improvements.slice(0, 3).map((imp, i) => (
-                  <div key={i} className="flex items-start gap-2 text-sm">
-                    <span className="text-muted-foreground">{i + 1}.</span>
-                    <span>{imp}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="space-y-2 mt-4">
-                <p className="text-xs font-semibold text-warning uppercase">Medium Priority</p>
-                {generatedContent.improvements.slice(3, 5).map((imp, i) => (
-                  <div key={i} className="flex items-start gap-2 text-sm">
-                    <span className="text-muted-foreground">{i + 4}.</span>
-                    <span>{imp}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="space-y-2 mt-4">
-                <p className="text-xs font-semibold text-muted-foreground uppercase">Low Priority</p>
-                {generatedContent.improvements.slice(5).map((imp, i) => (
-                  <div key={i} className="flex items-start gap-2 text-sm">
-                    <span className="text-muted-foreground">{i + 6}.</span>
-                    <span>{imp}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ),
-        },
+        { id: "tailored", label: "Tailored Resume", content: tailoredResume!.rendered_text },
+        { id: "changes", label: "What Changed", content: <DiffView diffs={diffs} /> },
+        { id: "gaps", label: "Skill Gaps", content: <GapsView gaps={gaps} /> },
       ]
-    : [
-        {
-          id: "resume",
-          label: "Resume Text",
-          content:
-            'Fill out the form and click "Generate Resume Text" to see your generated resume here.',
-        },
-      ];
+    : savedResumeId
+      ? [{ id: "preview", label: "Preview", content: previewText }]
+      : [
+          {
+            id: "preview",
+            label: "Preview",
+            content: 'Fill in your details and click "Save Resume" to store it on your dashboard.',
+          },
+        ];
 
   return (
     <Layout>
       <div className="page-container section-spacing">
         <PageHeader
           title="Resume Builder"
-          description="Create a professional resume from scratch. Fill in your details and let us format it for ATS compatibility."
-          helperText="All fields are saved automatically so you can come back anytime."
+          description="Build a resume from scratch, save it to your dashboard, and optionally tailor it to a specific job."
         />
+
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          <Select onValueChange={onSample}>
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="Use a sample" />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(sampleProfiles).map(([key, p]) => (
+                <SelectItem key={key} value={key}>
+                  {p.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button type="button" variant="outline" onClick={onClear} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Clear Form
+          </Button>
+        </div>
 
         <div className="grid lg:grid-cols-2 gap-8">
           {/* Left: Form */}
-          <div className="space-y-4">
-            {/* Job Description */}
-            <FormSection title="Job Description" description="Paste the job you're applying for">
-              <div className="space-y-4">
+          <form onSubmit={onSave} className="space-y-6" noValidate>
+            {/* Personal info */}
+            <Card className="p-4 space-y-4">
+              <h3 className="font-semibold">Personal Information</h3>
+              <div className="grid sm:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="jobDescription">Job Description</Label>
-                  <Textarea
-                    id="jobDescription"
-                    placeholder="Paste the job description here..."
-                    value={formData.jobDescription}
-                    onChange={(e) => updateField("jobDescription", e.target.value)}
-                    rows={5}
-                    className="mt-1.5"
-                  />
-                </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="companyName">Company Name (optional)</Label>
-                    <Input
-                      id="companyName"
-                      placeholder="e.g., Google"
-                      value={formData.companyName}
-                      onChange={(e) => updateField("companyName", e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="roleTitle">Role Title (optional)</Label>
-                    <Input
-                      id="roleTitle"
-                      placeholder="e.g., Software Engineer"
-                      value={formData.roleTitle}
-                      onChange={(e) => updateField("roleTitle", e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                </div>
-              </div>
-            </FormSection>
-
-            {/* Resume Settings */}
-            <FormSection title="Resume Settings" description="Customize your resume format">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="onePageOnly">One Page Only</Label>
-                  <Switch
-                    id="onePageOnly"
-                    checked={formData.onePageOnly}
-                    onCheckedChange={(checked) => updateField("onePageOnly", checked)}
-                  />
+                  <Label htmlFor="fullName">Full Name *</Label>
+                  <Input id="fullName" className="mt-1.5" {...register("fullName")} />
+                  {errors.fullName && (
+                    <p className="mt-1 text-xs text-destructive">{errors.fullName.message}</p>
+                  )}
                 </div>
                 <div>
-                  <Label className="mb-3 block">Tone</Label>
-                  <RadioGroup
-                    value={formData.tone}
-                    onValueChange={(value) => updateField("tone", value as FormData["tone"])}
-                    className="flex gap-4"
-                  >
-                    {["confident", "neutral", "direct"].map((tone) => (
-                      <div key={tone} className="flex items-center space-x-2">
-                        <RadioGroupItem value={tone} id={tone} />
-                        <Label htmlFor={tone} className="capitalize cursor-pointer">
-                          {tone}
-                        </Label>
-                      </div>
-                    ))}
-                  </RadioGroup>
+                  <Label htmlFor="email">Email *</Label>
+                  <Input id="email" type="email" className="mt-1.5" {...register("email")} />
+                  {errors.email && (
+                    <p className="mt-1 text-xs text-destructive">{errors.email.message}</p>
+                  )}
                 </div>
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="includeProjects"
-                    checked={formData.includeProjects}
-                    onCheckedChange={(checked) => updateField("includeProjects", checked as boolean)}
-                  />
-                  <Label htmlFor="includeProjects" className="cursor-pointer">
-                    Include Projects section
-                  </Label>
+                <div>
+                  <Label htmlFor="phone">Phone</Label>
+                  <Input id="phone" className="mt-1.5" {...register("phone")} />
                 </div>
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="includeCertifications"
-                    checked={formData.includeCertifications}
-                    onCheckedChange={(checked) => updateField("includeCertifications", checked as boolean)}
-                  />
-                  <Label htmlFor="includeCertifications" className="cursor-pointer">
-                    Include Certifications
-                  </Label>
+                <div>
+                  <Label htmlFor="location">Location</Label>
+                  <Input id="location" className="mt-1.5" {...register("location")} />
+                </div>
+                <div>
+                  <Label htmlFor="linkedin">LinkedIn</Label>
+                  <Input id="linkedin" className="mt-1.5" {...register("linkedin")} />
+                </div>
+                <div>
+                  <Label htmlFor="portfolio">Portfolio</Label>
+                  <Input id="portfolio" className="mt-1.5" {...register("portfolio")} />
                 </div>
               </div>
-            </FormSection>
+            </Card>
 
-            {/* Personal Info */}
-            <FormSection title="Personal Info" description="Your contact details">
-              <div className="space-y-4">
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="fullName">Full Name *</Label>
-                    <Input
-                      id="fullName"
-                      placeholder="John Doe"
-                      value={formData.fullName}
-                      onChange={(e) => updateField("fullName", e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="email">Email *</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="john@example.com"
-                      value={formData.email}
-                      onChange={(e) => updateField("email", e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="phone">Phone</Label>
-                    <Input
-                      id="phone"
-                      placeholder="+1 234 567 8900"
-                      value={formData.phone}
-                      onChange={(e) => updateField("phone", e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="location">Location</Label>
-                    <Input
-                      id="location"
-                      placeholder="City, Country"
-                      value={formData.location}
-                      onChange={(e) => updateField("location", e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="linkedin">LinkedIn</Label>
-                    <Input
-                      id="linkedin"
-                      placeholder="linkedin.com/in/johndoe"
-                      value={formData.linkedin}
-                      onChange={(e) => updateField("linkedin", e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="portfolio">Portfolio / GitHub</Label>
-                    <Input
-                      id="portfolio"
-                      placeholder="github.com/johndoe"
-                      value={formData.portfolio}
-                      onChange={(e) => updateField("portfolio", e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                </div>
-              </div>
-            </FormSection>
-
-            {/* Professional Summary */}
-            <FormSection title="Professional Summary" description="Optional raw notes" defaultOpen={false}>
-              <div>
-                <Label htmlFor="summary">Summary Notes</Label>
-                <Textarea
-                  id="summary"
-                  placeholder="Write a few notes about your background and goals. We'll help format it."
-                  value={formData.summary}
-                  onChange={(e) => updateField("summary", e.target.value)}
-                  rows={3}
-                  className="mt-1.5"
-                />
-              </div>
-            </FormSection>
+            {/* Summary */}
+            <Card className="p-4 space-y-3">
+              <h3 className="font-semibold">Professional Summary</h3>
+              <Textarea rows={4} placeholder="A short summary of who you are…" {...register("summary")} />
+            </Card>
 
             {/* Skills */}
-            <FormSection title="Skills" description="Add your technical and soft skills">
-              <div>
-                <Label>Skills</Label>
-                <TagInput
-                  value={formData.skills}
-                  onChange={(skills) => updateField("skills", skills)}
-                  placeholder="Add a skill..."
-                  className="mt-1.5"
-                />
-              </div>
-            </FormSection>
+            <Card className="p-4 space-y-3">
+              <h3 className="font-semibold">Skills</h3>
+              <Input placeholder="Comma-separated, e.g. React, Node.js, SQL" {...register("skills")} />
+              <p className="text-xs text-muted-foreground">Separate skills with commas.</p>
+            </Card>
 
             {/* Experience */}
-            <FormSection title="Experience" description="Add your work experience">
-              <div className="space-y-6">
-                {formData.experiences.map((exp, index) => (
-                  <div key={exp.id} className="p-4 border rounded-lg bg-muted/20 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">Experience {index + 1}</span>
-                      {formData.experiences.length > 1 && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeExperience(exp.id)}
-                          className="text-destructive hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      <div>
-                        <Label>Company/Organization</Label>
-                        <Input
-                          placeholder="Company name"
-                          value={exp.company}
-                          onChange={(e) => updateExperience(exp.id, "company", e.target.value)}
-                          className="mt-1.5"
-                        />
-                      </div>
-                      <div>
-                        <Label>Role</Label>
-                        <Input
-                          placeholder="Your job title"
-                          value={exp.role}
-                          onChange={(e) => updateExperience(exp.id, "role", e.target.value)}
-                          className="mt-1.5"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <Label>Dates</Label>
-                      <Input
-                        placeholder="Jun 2024 – Present"
-                        value={exp.dates}
-                        onChange={(e) => updateExperience(exp.id, "dates", e.target.value)}
-                        className="mt-1.5"
-                      />
-                    </div>
-                    <div>
-                      <Label>What I Did (raw notes)</Label>
-                      <Textarea
-                        placeholder="Describe your responsibilities and achievements..."
-                        value={exp.description}
-                        onChange={(e) => updateExperience(exp.id, "description", e.target.value)}
-                        rows={3}
-                        className="mt-1.5"
-                      />
-                    </div>
-                    <div>
-                      <Label>Impact/Metrics (optional)</Label>
-                      <Input
-                        placeholder="e.g., Increased sales by 20%"
-                        value={exp.metrics}
-                        onChange={(e) => updateExperience(exp.id, "metrics", e.target.value)}
-                        className="mt-1.5"
-                      />
-                    </div>
-                  </div>
-                ))}
-                <Button variant="outline" onClick={addExperience} className="w-full">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Experience
+            <Card className="p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">Experience</h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    experiences.append({ company: "", role: "", dates: "", bullets: "", metrics: "" })
+                  }
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Add
                 </Button>
               </div>
-            </FormSection>
+              {experiences.fields.map((field, i) => (
+                <div key={field.id} className="space-y-2 border rounded-lg p-3">
+                  <div className="grid sm:grid-cols-3 gap-2">
+                    <div>
+                      <Input placeholder="Role *" {...register(`experiences.${i}.role`)} />
+                      {errors.experiences?.[i]?.role && (
+                        <p className="mt-1 text-xs text-destructive">
+                          {errors.experiences[i]?.role?.message}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <Input placeholder="Company *" {...register(`experiences.${i}.company`)} />
+                      {errors.experiences?.[i]?.company && (
+                        <p className="mt-1 text-xs text-destructive">
+                          {errors.experiences[i]?.company?.message}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <Input placeholder="Dates * (e.g. Jun 2023 - Present)" {...register(`experiences.${i}.dates`)} />
+                      {errors.experiences?.[i]?.dates && (
+                        <p className="mt-1 text-xs text-destructive">
+                          {errors.experiences[i]?.dates?.message}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <Textarea
+                    rows={3}
+                    placeholder="Bullet points — one per line"
+                    {...register(`experiences.${i}.bullets`)}
+                  />
+                  <Input placeholder="Metrics (optional, comma or line separated)" {...register(`experiences.${i}.metrics`)} />
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => experiences.remove(i)}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Remove
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              {experiences.fields.length === 0 && (
+                <p className="text-xs text-muted-foreground">No experience added yet.</p>
+              )}
+            </Card>
 
             {/* Projects */}
-            <FormSection title="Projects" description="Add your personal or professional projects" defaultOpen={false}>
-              <div className="space-y-6">
-                {formData.projects.map((proj, index) => (
-                  <div key={proj.id} className="p-4 border rounded-lg bg-muted/20 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">Project {index + 1}</span>
-                      {formData.projects.length > 1 && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeProject(proj.id)}
-                          className="text-destructive hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      <div>
-                        <Label>Project Name</Label>
-                        <Input
-                          placeholder="My Awesome Project"
-                          value={proj.name}
-                          onChange={(e) => updateProject(proj.id, "name", e.target.value)}
-                          className="mt-1.5"
-                        />
-                      </div>
-                      <div>
-                        <Label>Link (optional)</Label>
-                        <Input
-                          placeholder="github.com/..."
-                          value={proj.link}
-                          onChange={(e) => updateProject(proj.id, "link", e.target.value)}
-                          className="mt-1.5"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <Label>Tech Stack</Label>
-                      <Input
-                        placeholder="React, Node.js, PostgreSQL"
-                        value={proj.stack}
-                        onChange={(e) => updateProject(proj.id, "stack", e.target.value)}
-                        className="mt-1.5"
-                      />
-                    </div>
-                    <div>
-                      <Label>What it does</Label>
-                      <Textarea
-                        placeholder="Describe what the project does..."
-                        value={proj.description}
-                        onChange={(e) => updateProject(proj.id, "description", e.target.value)}
-                        rows={2}
-                        className="mt-1.5"
-                      />
-                    </div>
-                    <div>
-                      <Label>Your Contribution</Label>
-                      <Textarea
-                        placeholder="What you built or your role..."
-                        value={proj.contribution}
-                        onChange={(e) => updateProject(proj.id, "contribution", e.target.value)}
-                        rows={2}
-                        className="mt-1.5"
-                      />
-                    </div>
-                    <div>
-                      <Label>Results/Metrics (optional)</Label>
-                      <Input
-                        placeholder="e.g., 1000+ users, 4.8 rating"
-                        value={proj.results}
-                        onChange={(e) => updateProject(proj.id, "results", e.target.value)}
-                        className="mt-1.5"
-                      />
-                    </div>
-                  </div>
-                ))}
-                <Button variant="outline" onClick={addProject} className="w-full">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Project
+            <Card className="p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">Projects</h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    projects.append({ name: "", link: "", stack: "", bullets: "", results: "" })
+                  }
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Add
                 </Button>
               </div>
-            </FormSection>
+              {projects.fields.map((field, i) => (
+                <div key={field.id} className="space-y-2 border rounded-lg p-3">
+                  <div className="grid sm:grid-cols-3 gap-2">
+                    <div>
+                      <Input placeholder="Project name *" {...register(`projects.${i}.name`)} />
+                      {errors.projects?.[i]?.name && (
+                        <p className="mt-1 text-xs text-destructive">
+                          {errors.projects[i]?.name?.message}
+                        </p>
+                      )}
+                    </div>
+                    <Input placeholder="Stack" {...register(`projects.${i}.stack`)} />
+                    <Input placeholder="Link" {...register(`projects.${i}.link`)} />
+                  </div>
+                  <Textarea
+                    rows={2}
+                    placeholder="Bullet points — one per line"
+                    {...register(`projects.${i}.bullets`)}
+                  />
+                  <Input placeholder="Results (optional)" {...register(`projects.${i}.results`)} />
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => projects.remove(i)}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Remove
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              {projects.fields.length === 0 && (
+                <p className="text-xs text-muted-foreground">No projects added yet.</p>
+              )}
+            </Card>
 
             {/* Education */}
-            <FormSection title="Education" description="Your educational background">
-              <div className="space-y-4">
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="school">School/University</Label>
-                    <Input
-                      id="school"
-                      placeholder="University of Lagos"
-                      value={formData.school}
-                      onChange={(e) => updateField("school", e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="degree">Degree</Label>
-                    <Input
-                      id="degree"
-                      placeholder="B.Sc. Computer Science"
-                      value={formData.degree}
-                      onChange={(e) => updateField("degree", e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="eduDates">Dates</Label>
-                    <Input
-                      id="eduDates"
-                      placeholder="2021 – 2025"
-                      value={formData.eduDates}
-                      onChange={(e) => updateField("eduDates", e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="gpa">GPA (optional)</Label>
-                    <Input
-                      id="gpa"
-                      placeholder="3.8"
-                      value={formData.gpa}
-                      onChange={(e) => updateField("gpa", e.target.value)}
-                      className="mt-1.5"
-                    />
-                  </div>
-                </div>
+            <Card className="p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">Education</h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => education.append({ school: "", degree: "", dates: "", gpa: "" })}
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Add
+                </Button>
               </div>
-            </FormSection>
+              {education.fields.map((field, i) => (
+                <div key={field.id} className="space-y-2 border rounded-lg p-3">
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    <div>
+                      <Input placeholder="School *" {...register(`education.${i}.school`)} />
+                      {errors.education?.[i]?.school && (
+                        <p className="mt-1 text-xs text-destructive">
+                          {errors.education[i]?.school?.message}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <Input placeholder="Degree *" {...register(`education.${i}.degree`)} />
+                      {errors.education?.[i]?.degree && (
+                        <p className="mt-1 text-xs text-destructive">
+                          {errors.education[i]?.degree?.message}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <Input placeholder="Dates *" {...register(`education.${i}.dates`)} />
+                      {errors.education?.[i]?.dates && (
+                        <p className="mt-1 text-xs text-destructive">
+                          {errors.education[i]?.dates?.message}
+                        </p>
+                      )}
+                    </div>
+                    <Input placeholder="GPA / Class (optional)" {...register(`education.${i}.gpa`)} />
+                  </div>
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => education.remove(i)}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Remove
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              {education.fields.length === 0 && (
+                <p className="text-xs text-muted-foreground">No education added yet.</p>
+              )}
+            </Card>
 
             {/* Extras */}
-            <FormSection title="Extras" description="Certifications, awards, volunteering" defaultOpen={false}>
-              <div className="space-y-4">
+            <Card className="p-4 space-y-3">
+              <h3 className="font-semibold">Additional Sections</h3>
+              <div>
+                <Label htmlFor="certifications">Certifications</Label>
+                <Textarea id="certifications" rows={2} placeholder="One per line" className="mt-1.5" {...register("certifications")} />
+              </div>
+              <div>
+                <Label htmlFor="awards">Awards</Label>
+                <Textarea id="awards" rows={2} placeholder="One per line" className="mt-1.5" {...register("awards")} />
+              </div>
+              <div>
+                <Label htmlFor="volunteering">Volunteering</Label>
+                <Textarea id="volunteering" rows={2} placeholder="One per line" className="mt-1.5" {...register("volunteering")} />
+              </div>
+            </Card>
+
+            {/* Tailoring */}
+            <Card className="p-4 space-y-4">
+              <h3 className="font-semibold">Tailor to a Job (optional)</h3>
+              <div>
+                <Label htmlFor="jobDescription">Job Description</Label>
+                <Textarea
+                  id="jobDescription"
+                  rows={5}
+                  placeholder="Paste a job description here…"
+                  className="mt-1.5"
+                  {...register("jobDescription")}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Optional — paste a job description to tailor this resume to a specific role after saving.
+                </p>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="certifications">Certifications (one per line)</Label>
-                  <Textarea
-                    id="certifications"
-                    placeholder="AWS Cloud Practitioner&#10;Google Data Analytics Certificate"
-                    value={formData.certifications}
-                    onChange={(e) => updateField("certifications", e.target.value)}
-                    rows={3}
-                    className="mt-1.5"
-                  />
+                  <Label htmlFor="roleTitle">Role Title</Label>
+                  <Input id="roleTitle" className="mt-1.5" {...register("roleTitle")} />
                 </div>
                 <div>
-                  <Label htmlFor="awards">Awards (one per line)</Label>
-                  <Textarea
-                    id="awards"
-                    placeholder="Dean's List 2024&#10;Hackathon Winner"
-                    value={formData.awards}
-                    onChange={(e) => updateField("awards", e.target.value)}
-                    rows={2}
-                    className="mt-1.5"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="volunteering">Volunteering/Leadership (one per line)</Label>
-                  <Textarea
-                    id="volunteering"
-                    placeholder="Tech Lead, Google DSC&#10;Volunteer, Local NGO"
-                    value={formData.volunteering}
-                    onChange={(e) => updateField("volunteering", e.target.value)}
-                    rows={2}
-                    className="mt-1.5"
-                  />
+                  <Label htmlFor="companyName">Company Name</Label>
+                  <Input id="companyName" className="mt-1.5" {...register("companyName")} />
                 </div>
               </div>
-            </FormSection>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="onePageOnly">Keep it to one page</Label>
+                <Switch
+                  id="onePageOnly"
+                  checked={watch("onePageOnly")}
+                  onCheckedChange={(v) => form.setValue("onePageOnly", v, { shouldDirty: true })}
+                />
+              </div>
+            </Card>
 
-            {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-3 pt-4">
-              <Button onClick={handleGenerate} disabled={isGenerating} className="flex-1">
-                {isGenerating && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                Generate Resume Text
+            {/* Actions */}
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="submit" disabled={createResume.isPending} className="gap-2">
+                {createResume.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving…
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4" />
+                    Save Resume
+                  </>
+                )}
               </Button>
-              <Button variant="outline" onClick={clearForm}>
-                Clear Form
+
+              {isSaved && (
+                <Badge variant="outline" className="gap-1 text-green-700 dark:text-green-400 border-green-500/30">
+                  <Check className="h-3.5 w-3.5" />
+                  Saved
+                </Badge>
+              )}
+
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={onTailor}
+                disabled={!canTailor || isTailoring}
+                className="gap-2"
+                title={canTailor ? undefined : "Add a job description to enable tailoring"}
+              >
+                {isTailoring ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {statusLabel}
+                  </>
+                ) : (
+                  <>
+                    <Wand2 className="h-4 w-4" />
+                    Tailor to this JD
+                  </>
+                )}
               </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost">
-                    Use a sample <ChevronDown className="h-4 w-4 ml-1" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuItem onClick={() => loadSampleProfile("entry-swe")}>
-                    Entry-level SWE
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => loadSampleProfile("data-analyst")}>
-                    Data Analyst Intern
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => loadSampleProfile("product-designer")}>
-                    Product Designer Intern
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
             </div>
-          </div>
+          </form>
 
-          {/* Right: Output Panel */}
-          <div className="lg:sticky lg:top-24 lg:self-start">
+          {/* Right: Output */}
+          <div className="lg:sticky lg:top-24 lg:self-start space-y-3">
+            {succeeded && tailoredResume && (
+              <div className="flex justify-end">
+                <ExportMenu
+                  structured={tailoredResume.structured as ResumeStructuredData}
+                  roleTitle={watch("roleTitle")}
+                  companyName={watch("companyName")}
+                />
+              </div>
+            )}
             <OutputPanel
-              title="Your Resume (Copy & Paste)"
+              title={succeeded ? "Tailored Resume" : "Resume Preview"}
               tabs={outputTabs}
-              isLoading={isGenerating}
+              isLoading={isTailoring}
             />
+            {savedResumeId && !succeeded && !canTailor && (
+              <p className="text-xs text-muted-foreground text-center">
+                Saved. Paste a job description above and click &ldquo;Tailor to this JD&rdquo; to optimize it for a role.
+              </p>
+            )}
           </div>
         </div>
       </div>
