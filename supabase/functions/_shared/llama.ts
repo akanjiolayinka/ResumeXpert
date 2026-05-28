@@ -201,3 +201,134 @@ export async function chatCompletion(
     model: opts.model,
   };
 }
+
+// ── Streaming ───────────────────────────────────────────────────────────
+// Used by the chat function. Same provider/failover semantics as the
+// buffered path, but returns a ReadableStream of content tokens once an OK
+// streaming response is open. Token parsing (OpenAI-style SSE) is done here
+// so callers only deal with plain strings.
+
+export type StreamCompletionResult = {
+  tokens: ReadableStream<string>;
+  provider: "groq" | "together";
+  model: string;
+};
+
+async function openStream(
+  url: string,
+  apiKey: string,
+  model: string,
+  messages: ChatMessage[],
+  temperature: number,
+  maxTokens: number | undefined,
+): Promise<Response> {
+  const body: Record<string, unknown> = { model, messages, temperature, stream: true };
+  if (maxTokens !== undefined) body.max_tokens = maxTokens;
+  return await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Parses an OpenAI-style SSE response body into a stream of content tokens. */
+function sseToTokens(response: Response): ReadableStream<string> {
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  return new ReadableStream<string>({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        controller.close();
+        return;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() ?? "";
+      for (const ev of events) {
+        const line = ev.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") {
+          controller.close();
+          return;
+        }
+        try {
+          const json = JSON.parse(data) as {
+            choices?: Array<{ delta?: { content?: unknown } }>;
+          };
+          const delta = json.choices?.[0]?.delta?.content;
+          if (typeof delta === "string" && delta.length > 0) {
+            controller.enqueue(delta);
+          }
+        } catch {
+          // Ignore keep-alive comments / malformed partial lines.
+        }
+      }
+    },
+    cancel() {
+      void reader.cancel();
+    },
+  });
+}
+
+export async function streamChatCompletion(
+  opts: ChatCompletionOptions,
+): Promise<StreamCompletionResult> {
+  const groqKey = Deno.env.get("GROQ_API_KEY");
+  if (!groqKey) throw new Error("GROQ_API_KEY is not set");
+  const togetherKey = Deno.env.get("TOGETHER_API_KEY") ?? "";
+
+  const temperature = opts.temperature ?? 0.7;
+
+  let resp = await openStream(
+    GROQ_URL,
+    groqKey,
+    opts.model,
+    opts.messages,
+    temperature,
+    opts.maxTokens,
+  );
+
+  if (resp.status === 429) {
+    await sleep(parseRetryAfter(resp));
+    resp = await openStream(GROQ_URL, groqKey, opts.model, opts.messages, temperature, opts.maxTokens);
+    if (resp.status === 429) {
+      if (opts.fallback && togetherKey) {
+        const togetherModel = TOGETHER_MODEL_MAP[opts.model] ?? opts.model;
+        const tResp = await openStream(
+          TOGETHER_URL,
+          togetherKey,
+          togetherModel,
+          opts.messages,
+          temperature,
+          opts.maxTokens,
+        );
+        if (tResp.ok) {
+          return { tokens: sseToTokens(tResp), provider: "together", model: togetherModel };
+        }
+      }
+      throw new AIUnavailableError();
+    }
+  }
+
+  if (resp.status >= 500) {
+    await sleep(1000);
+    resp = await openStream(GROQ_URL, groqKey, opts.model, opts.messages, temperature, opts.maxTokens);
+    if (resp.status >= 500) {
+      throw new AIUnavailableError("AI provider failed. Try again shortly.");
+    }
+  }
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Provider error ${resp.status}: ${text.slice(0, 500)}`);
+  }
+
+  return { tokens: sseToTokens(resp), provider: "groq", model: opts.model };
+}
