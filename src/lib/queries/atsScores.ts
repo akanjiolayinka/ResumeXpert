@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import type { Database } from "@/lib/database.types";
 import { tailoringJobKeys } from "@/lib/queries/tailoringJobs";
@@ -21,8 +21,27 @@ export type ATSSuggestion = {
 // ── Query keys ──────────────────────────────────────────────────────────────
 export const atsScoreKeys = {
   all: ["ats_scores"] as const,
+  lists: () => [...atsScoreKeys.all, "list"] as const,
   detail: (id: string) => [...atsScoreKeys.all, "detail", id] as const,
 };
+
+/**
+ * All ats_scores for the current user, ordered by created_at ascending —
+ * suitable for plotting a trend line. RLS scopes results to the caller.
+ */
+export function useATSScores() {
+  return useQuery({
+    queryKey: atsScoreKeys.lists(),
+    queryFn: async (): Promise<ATSScore[]> => {
+      const { data, error } = await supabase
+        .from("ats_scores")
+        .select("*")
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
 
 // ── Mutation ────────────────────────────────────────────────────────────────
 
