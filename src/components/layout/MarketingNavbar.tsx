@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
 import { Menu, FileText } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 
 const navLinks = [
   { to: "/features", label: "Features" },
@@ -14,6 +15,8 @@ const navLinks = [
 export function MarketingNavbar() {
   const location = useLocation();
   const [isOpen, setIsOpen] = useState(false);
+  const { user } = useAuth();
+  const isAuthed = !!user;
   const isActive = (path: string) => location.pathname === path;
 
   return (
@@ -45,12 +48,20 @@ export function MarketingNavbar() {
 
         <div className="hidden md:flex items-center gap-2">
           <ThemeToggle />
-          <Link to="/auth/login">
-            <Button variant="ghost" size="sm">Sign in</Button>
-          </Link>
-          <Link to="/auth/signup">
-            <Button size="sm">Start free trial</Button>
-          </Link>
+          {isAuthed ? (
+            <Link to="/dashboard">
+              <Button size="sm">Go to Dashboard</Button>
+            </Link>
+          ) : (
+            <>
+              <Link to="/auth/login">
+                <Button variant="ghost" size="sm">Sign in</Button>
+              </Link>
+              <Link to="/auth/signup">
+                <Button size="sm">Start free trial</Button>
+              </Link>
+            </>
+          )}
         </div>
 
         {/* Mobile */}
@@ -87,12 +98,20 @@ export function MarketingNavbar() {
                   ))}
                 </div>
                 <div className="pt-4 border-t flex flex-col gap-2">
-                  <Link to="/auth/login" onClick={() => setIsOpen(false)}>
-                    <Button variant="outline" className="w-full">Sign in</Button>
-                  </Link>
-                  <Link to="/auth/signup" onClick={() => setIsOpen(false)}>
-                    <Button className="w-full">Start free trial</Button>
-                  </Link>
+                  {isAuthed ? (
+                    <Link to="/dashboard" onClick={() => setIsOpen(false)}>
+                      <Button className="w-full">Go to Dashboard</Button>
+                    </Link>
+                  ) : (
+                    <>
+                      <Link to="/auth/login" onClick={() => setIsOpen(false)}>
+                        <Button variant="outline" className="w-full">Sign in</Button>
+                      </Link>
+                      <Link to="/auth/signup" onClick={() => setIsOpen(false)}>
+                        <Button className="w-full">Start free trial</Button>
+                      </Link>
+                    </>
+                  )}
                 </div>
               </div>
             </SheetContent>
