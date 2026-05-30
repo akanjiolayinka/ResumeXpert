@@ -75,3 +75,32 @@ export function useDeleteResume() {
     },
   });
 }
+
+/**
+ * Flip is_default on the target row. The schema has a partial unique index
+ * enforcing one default per user, so we clear any existing default first.
+ * Both writes are RLS-scoped to the caller.
+ */
+export function useSetDefaultResume() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      const { data: u, error: uErr } = await supabase.auth.getUser();
+      if (uErr || !u.user) throw new Error("Not authenticated");
+      const { error: clearErr } = await supabase
+        .from("resumes")
+        .update({ is_default: false } as never)
+        .eq("user_id", u.user.id)
+        .eq("is_default", true);
+      if (clearErr) throw clearErr;
+      const { error } = await supabase
+        .from("resumes")
+        .update({ is_default: true } as never)
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: resumeKeys.lists() });
+    },
+  });
+}
